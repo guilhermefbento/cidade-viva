@@ -1,0 +1,18 @@
+{
+  "dependencies": {
+    "express": "^5.3.0",
+    "leaflet": "^1.9.4",
+    "maplibre-gl": "^6.19.0",
+    "multer": "^2.5.0",
+    "mysql2": "^3.24.6",
+    "three": "^0.187.0"
+  },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env server/index.js",
+    "admin": "node --env-file-if-exists=.env server/admin.js"
+  },
+  "name": "cidade-viva",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true
+}

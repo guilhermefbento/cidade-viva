@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="Registre e acompanhe problemas urbanos com a comunidade.">
+<title>Cidade Viva | São Paulo em movimento</title>
+<link rel="stylesheet" href="/leaflet/leaflet.css">
+<link rel="stylesheet" href="/maplibre/maplibre-gl.css">
+<link rel="stylesheet" href="/style.css"> 
+<link rel="stylesheet" href="/theme.css">
+<script defer src="/leaflet/leaflet.js"></script>
+<script type="module" src="/app.js"></script>
+</head>
+<body>
+<a class="skip-link" href="#content">Ir para o conteúdo</a>
+<aside class="sidebar">
+<a class="brand" href="#inicio"><span class="brand-icon" aria-hidden="true">cv</span><span>Cidade Viva<small>OBSERVATÓRIO CIDADÃO</small></span></a>
+<div class="territory-pill"><span class="live-dot"></span> São Paulo <span class="pill-label">CAPITAL</span></div>
+<span class="nav-label">EXPLORE SUA CIDADE</span>
+<nav class="side-nav" aria-label="Navegação principal">
+<a href="#inicio" data-page="inicio"><span aria-hidden="true">◫</span> Visão geral</a>
+<a href="#explorar" data-page="explorar"><span aria-hidden="true">◎</span> Explorar ocorrências</a>
+<a href="#indicadores" data-page="indicadores"><span aria-hidden="true">▥</span> Indicadores</a>
+<span class="nav-label">SUA PARTICIPAÇÃO</span>
+<a href="#minhas" data-page="minhas"><span aria-hidden="true">▤</span> Meus relatos</a>
+<a href="#acompanhando" data-page="acompanhando"><span aria-hidden="true">☆</span> Acompanhando</a>
+<a href="#gestao" data-page="gestao" id="admin-nav" hidden><span aria-hidden="true">⚑</span> Gestão de ocorrências</a>
+</nav>
+<div class="sidebar-bottom"><div class="community-note"><span class="mini-mark">SP</span><h3>Uma cidade melhor começa perto.</h3><p>Seu olhar sobre o bairro ajuda a dar visibilidade ao que precisa mudar.</p><a href="#como">Como participar ↗</a></div><span class="project-label">PROJETO ACADÊMICO · 2026</span></div>
+</aside>
+<div class="workspace">
+<header class="top"><div class="navigation">
+<div class="breadcrumb">São Paulo <span>/</span> <strong id="breadcrumb">Visão geral</strong></div>
+<div class="nav-actions"><button class="quiet notification-button" id="notifications" aria-label="Notificações">Notificações <span id="unread" hidden>0</span></button><button class="quiet" id="profile" hidden>Meu perfil</button><span id="account"></span><button class="quiet" id="auth">Entrar</button></div>
+</div></header>
+<main id="content">
+<section id="journey" class="journey" aria-label="Uma viagem pela Ponte Estaiada">
+  <div class="journey-stage">
+    <video id="journey-video" class="journey-video" poster="/data/ponte-poster.jpg" data-src="/data/ponte-rolagem.mp4" muted playsinline preload="metadata" aria-hidden="true"></video>
+    <div class="journey-shade" aria-hidden="true"></div>
+    <div class="journey-head">
+      <a class="journey-brand" href="#inicio">Cidade <span>Viva</span></a>
+      <div><a href="#explorar">Ocorrências</a><a href="#indicadores">Indicadores</a><button class="quiet" id="journey-notifications" type="button" hidden>Notificações</button><button class="quiet" id="journey-auth" type="button">Entrar</button></div>
+    </div>
+    <div class="journey-copy" id="journey-intro">
+      <p class="journey-label">SÃO PAULO, SP</p>
+      <h1>A cidade se move.<br><em>Você também.</em></h1>
+      <p>Registre e acompanhe problemas no seu bairro.</p>
+      <a href="#mapa" class="action">Explorar mapa ↗</a>
+    </div>
+    <div class="journey-copy journey-street" id="journey-street">
+      <p class="journey-label">RIO PINHEIROS · PONTE ESTAIADA</p>
+      <h2>Do alto para<br>o bairro.</h2>
+      <p>Veja onde a comunidade registrou problemas e como cada relato evolui.</p>
+    </div>
+    <div class="journey-progress" aria-hidden="true"></div>
+    <div class="journey-bottom"><a href="#mapa" id="scroll-hint">Role para acompanhar ↓</a><span>Ponte Estaiada · São Paulo</span></div>
+  </div>
+</section>
+<section class="page" id="page-inicio">
+<div class="map-arrival" id="mapa">
+  <div id="overview-map" class="map overview-map" aria-label="Mapa de ocorrências em São Paulo"></div>
+  <div class="map-overlay">
+    <span class="eyebrow">MUNICÍPIO DE SÃO PAULO</span>
+    <h2>Ocorrências<br>em São Paulo</h2>
+    <p id="overview-map-count" aria-live="polite">Carregando ocorrências…</p>
+    <form id="arrival-filters">
+      <label>Categoria<select name="categoria"><option value="">Todas as categorias</option></select></label>
+      <label>Status<select name="status"><option value="">Todos os status</option><option value="aberta">Aberta</option><option value="andamento">Em andamento</option><option value="resolvida">Resolvida</option></select></label>
+    </form>
+    <button class="action" id="create">Registrar ocorrência ↗</button>
+    <a href="#explorar">Ver lista de ocorrências</a>
+  </div>
+  <div class="map-actions">
+    <button class="quiet" id="map-city">Ver município</button>
+    <button class="quiet" id="map-bridge">Ver ponte</button>
+    <button class="quiet" id="map-mode" aria-pressed="false">Visão 2D</button>
+  </div>
+</div>
+<div id="stats" class="stats" aria-label="Resumo das ocorrências"></div>
+<section class="panel recent-panel"><div class="panel-head"><div><span class="eyebrow">COMUNIDADE</span><h2>Últimos relatos</h2></div><a href="#explorar">Ver todos ↗</a></div><div id="recent-reports"></div></section>
+<section class="participate"><div><span class="eyebrow">DA RUA PARA O MAPA</span><h2>Pequenos registros.<br>Mais visibilidade para o bairro.</h2><p>Um ponto no mapa pode mobilizar quem passa pelo mesmo lugar.</p><button class="quiet" id="hero-create">Quero contribuir ↗</button></div><div class="steps"><div><span>01</span><div><h3>Encontre e registre</h3><p>Marque o local em São Paulo, conte o problema e adicione uma foto.</p></div></div><div><span>02</span><div><h3>Some sua voz</h3><p>Confirme situações que você também encontrou e converse com a comunidade.</p></div></div><div><span>03</span><div><h3>Acompanhe a evolução</h3><p>Salve os relatos e receba avisos quando o status mudar.</p></div></div></div></section>
+</section>
+<section class="page" id="page-explorar" hidden>
+<div class="page-heading"><div><span class="eyebrow">OBSERVATÓRIO DE SÃO PAULO</span><h1 id="explorer-title">O que acontece na cidade</h1><p id="explorer-description">Explore os relatos e participe do cuidado com os espaços que você usa.</p></div><button class="action create-shortcut">+ Registrar ocorrência</button></div>
+<section class="dashboard" aria-labelledby="heading">
+<div class="section-head"><div><h2 id="heading">Ocorrências</h2><p id="count" aria-live="polite">Carregando…</p></div><div class="switch" aria-label="Visualização"><button id="show-list" aria-pressed="true">Lista</button><button id="show-map" aria-pressed="false">Mapa</button><button id="show-board" aria-pressed="false" hidden>Quadro</button></div></div>
+<form id="filters" class="filters">
+<label>Buscar na cidade<input name="busca" maxlength="100" type="search" placeholder="Problema, rua ou bairro"></label>
+<label>Categoria<select name="categoria"><option value="">Todas as categorias</option></select></label>
+<label>Status<select name="status"><option value="">Todos os status</option><option value="aberta">Aberta</option><option value="andamento">Em andamento</option><option value="resolvida">Resolvida</option></select></label>
+<label>Ordenar<select name="ordem"><option value="prioridade">Maior prioridade</option><option value="recente">Mais recentes</option></select></label>
+<button class="action">Buscar</button><button type="button" class="quiet" id="reset-filters">Limpar</button>
+</form>
+<div id="cards" class="cards"></div>
+<div id="board" class="board" hidden></div>
+<section id="map-panel" hidden aria-label="Mapa das ocorrências"><p id="map-count"></p><div id="report-map" class="map"></div><p class="muted">Mapa dos registros exibidos nos filtros atuais.</p></section>
+<button id="more" class="quiet" hidden>Carregar mais</button>
+</section></section>
+<section class="page" id="page-indicadores" hidden>
+<div class="page-heading"><div><span class="eyebrow">DADOS DA COMUNIDADE</span><h1>Uma leitura da cidade</h1><p>Indicadores calculados a partir dos relatos cadastrados em São Paulo.</p></div><button id="export" class="quiet">Exportar dados CSV ↗</button></div>
+<div id="analytics-stats" class="stats"></div>
+<div class="analytics-grid"><section class="panel"><div class="panel-head"><h2>Problemas por categoria</h2></div><div id="category-bars" class="chart-bars"></div></section><section class="panel"><div class="panel-head"><h2>Andamento dos relatos</h2></div><div id="status-chart" class="status-chart"></div></section><section class="panel wide"><div class="panel-head"><div><span class="eyebrow">ÚLTIMOS 14 DIAS</span><h2>Novos registros por dia</h2></div></div><div id="daily-chart" class="daily-chart"></div></section></div>
+<p class="muted">A prioridade combina o peso da categoria, as confirmações e o tempo desde o registro. Os indicadores representam a participação nesta plataforma.</p>
+</section>
+<section class="page" id="page-como" hidden>
+<div class="page-heading"><div><span class="eyebrow">PARTICIPAÇÃO CIDADÃ</span><h1>Seu bairro, com mais voz.</h1><p>Conheça o que acontece com cada registro.</p></div></div>
+<div class="info-grid">
+<article class="panel info"><span class="eyebrow">REGISTRAR</span><h2>Conte o que você encontrou</h2><p>Crie sua conta e registre buracos, lixo, iluminação, semáforos, calçadas ou alagamentos. Marque um ponto dentro do município de São Paulo e escreva uma descrição que ajude outras pessoas a reconhecer o problema.</p></article>
+<article class="panel info"><span class="eyebrow">PARTICIPAR</span><h2>Uma confirmação tem peso</h2><p>Encontrou o mesmo problema? Confirme o relato de outro cidadão. Cada conta pode confirmar uma vez. Use os comentários para acrescentar informações úteis e o botão de acompanhar para receber avisos de status.</p></article>
+<article class="panel info"><span class="eyebrow">ACOMPANHAR</span><h2>Um histórico transparente</h2><p>A administração da plataforma organiza o atendimento em três etapas — aberta, em andamento e resolvida. Cada mudança aparece no histórico com data e observação. O autor e quem acompanha recebem uma notificação dentro do site.</p></article>
+<article class="panel info"><span class="eyebrow">ENTENDER</span><h2>Como a prioridade funciona</h2><p>O cálculo soma duas vezes o peso da categoria, dois pontos por confirmação e um ponto por dia completo, limitado a seis pontos pelo tempo. Ocorrências resolvidas aparecem depois das pendentes.</p><p>Este é um projeto acadêmico independente. O registro aqui não abre um chamado na Prefeitura. Para solicitar um serviço municipal, use os canais oficiais do SP156.</p><a href="https://sp156.prefeitura.sp.gov.br/" target="_blank" rel="noopener">Acessar SP156 ↗</a></article>
+</div>
+</section>
+<div id="notice" class="notice" role="status" hidden></div>
+</main>
+<footer class="footer"><span>Cidade Viva <b>·</b> São Paulo</span><a href="#como">Sobre o projeto e participação</a><span>Computação Aplicada · 2026</span></footer>
+</div>
+<dialog id="notifications-dialog"><button class="close" type="button" aria-label="Fechar">×</button><span class="eyebrow">SUAS ATUALIZAÇÕES</span><h2>Notificações</h2><div id="notification-list"></div><button id="mark-read" class="quiet">Marcar todas como lidas</button><p class="error" role="alert" hidden></p></dialog>
+<dialog id="profile-dialog"><button class="close" type="button" aria-label="Fechar">×</button><h2>Meu perfil</h2><p id="profile-email" class="muted"></p><form id="profile-form"><label>Seu nome<input name="nome" required minlength="2" maxlength="100"></label><p class="error" role="alert" hidden></p><button class="action">Salvar nome</button></form><hr><h3>Alterar senha</h3><form id="password-form"><label>Senha atual<input name="atual" type="password" required maxlength="128" autocomplete="current-password"></label><label>Nova senha<input name="nova" type="password" required minlength="8" maxlength="128" autocomplete="new-password"></label><p class="muted">Ao salvar, entre novamente com a nova senha.</p><p class="error" role="alert" hidden></p><button class="action">Alterar senha</button></form></dialog>
+
+<dialog id="auth-dialog"><button class="close" type="button" aria-label="Fechar">×</button>
+<h2 id="auth-title">Entrar</h2>
+<form id="auth-form"><label id="name-field" hidden>Nome<input name="nome" maxlength="100" autocomplete="name"></label><label>E-mail<input name="email" type="email" required maxlength="254" autocomplete="email"></label><label>Senha<input name="senha" type="password" required maxlength="128" autocomplete="current-password"></label>
+<p class="error" role="alert" hidden></p><button class="action" id="auth-submit">Entrar</button><button type="button" class="quiet" id="auth-mode">Criar conta</button></form>
+</dialog>
+<dialog id="create-dialog"><button class="close" type="button" aria-label="Fechar">×</button>
+<h2>Nova ocorrência</h2>
+<form id="report-form">
+<label>Título<input name="titulo" required minlength="5" maxlength="100" placeholder="Ex.: Semáforo apagado na esquina"></label>
+<label>Categoria<select name="categoria_id" required><option value="">Selecione</option></select></label>
+<label>Descrição<textarea name="descricao" required minlength="10" maxlength="2000" rows="3" placeholder="Descreva o que você encontrou"></textarea></label>
+<label>Endereço<input name="endereco" maxlength="250" placeholder="Rua, número aproximado e bairro em São Paulo"></label>
+<div><p class="muted">Marque o ponto dentro da cidade de São Paulo. O contorno no mapa mostra o limite municipal.</p><div id="pick-map" class="map small"></div></div>
+<div class="row"><label>Latitude<input name="latitude" required type="number" step="any" min="-90" max="90"></label><label>Longitude<input name="longitude" required type="number" step="any" min="-180" max="180"></label></div>
+<div class="row"><button type="button" class="quiet" id="locate">Usar minha localização</button><button type="button" class="quiet" id="clear-location">Limpar ponto</button></div>
+<label>Foto (opcional, até 5 MB)<input name="foto" type="file" accept="image/png,image/jpeg,image/webp"></label>
+<p class="error" role="alert" hidden></p><button class="action">Publicar ocorrência</button>
+</form>
+</dialog>
+<dialog id="detail"><button class="close" type="button" aria-label="Fechar">×</button><div id="detail-body"></div></dialog>
+</body></html>
+
