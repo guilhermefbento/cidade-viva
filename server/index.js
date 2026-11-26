@@ -1,4 +1,5 @@
-import { upgrade, inSaoPaulo, registerFeatures, notifyStatus, scope } from './features.js';
+import { registerAddressRoutes } from './addresses.js';
+import { upgrade, inSaoPaulo, registerFeatures, notifyStatus, scope, usesLegacyLocations } from './features.js';
 import './config.js';
 import express from 'express';
 import multer from 'multer';
@@ -22,24 +23,25 @@ app.use((_req, res, next) => {
 app.use('/api', express.json({ limit: '20kb' }), (req, res, next) => {
   res.set('Cache-Control', 'no-store');
   if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && req.get('Origin')) {
-    if (req.get('Origin') !== req.protocol + '://' + req.get('Host')) return res.status(403).json({ erro: 'Origem inválida.' });
+    if (req.get('Origin') !== req.protocol + '://' + req.get('Host')) return res.status(403).json({ erro: 'Abra o Cidade Viva diretamente no navegador e tente novamente.' });
   }
   next();
 });
 const fail = (status, message) => { throw Object.assign(new Error(message), { status }); };
 const rows = async (connection, sql, params = []) => (await connection.execute(sql, params))[0];
-const clean = (value, max, min = 0) => {
+const clean = (value, max, min = 0, field = 'O texto') => {
   const text = typeof value === 'string' ? value.trim() : '';
-  if (text.length < min || text.length > max) fail(400, 'Confira o tamanho dos campos.');
+  if (text.length < min) fail(400, field + ' precisa ter pelo menos ' + min + ' caracteres.');
+  if (text.length > max) fail(400, field + ' pode ter até ' + max + ' caracteres.');
   return text;
 };
 const id = value => {
   const number = Number(value);
-  if (!Number.isInteger(number) || number < 1 || number > 2147483647) fail(400, 'Identificador inválido.');
+  if (!Number.isInteger(number) || number < 1 || number > 2147483647) fail(400, 'O código informado não é válido.');
   return number;
 };
 const email = value => {
-  const result = clean(value, 254, 3).toLowerCase();
+  const result = clean(value, 254, 3, 'O e-mail').toLowerCase();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(result)) fail(400, 'Informe um e-mail válido.');
   return result;
 };
@@ -73,7 +75,7 @@ function limitAuth(req, _res, next) {
   for (const [ip, entry] of attempts) if (entry.until < now) attempts.delete(ip);
   const entry = attempts.get(req.ip) || { count: 0, until: now + 600000 };
   attempts.set(req.ip, entry);
-  if (++entry.count > 30) fail(429, 'Aguarde alguns minutos para tentar novamente.');
+  if (++entry.count > 30) fail(429, 'Muitas tentativas. Aguarde alguns minutos e tente novamente.');
   next();
 }
 app.get('/api/saude', async (_req, res) => {
@@ -83,7 +85,7 @@ app.get('/api/saude', async (_req, res) => {
 app.get('/api/sessao', async (req, res) => res.json({ usuario: await currentUser(req) }));
 app.post('/api/cadastro', limitAuth, async (req, res) => {
   const { nome, email: inputEmail, senha } = req.body || {};
-  const name = clean(nome, 100, 2);
+  const name = clean(nome, 100, 2, 'O nome');
   const login = email(inputEmail);
   if (typeof senha !== 'string' || senha.trim().length < 8 || senha.length > 128) fail(400, 'Use uma senha de 8 a 128 caracteres.');
   const result = await rows(db, 'INSERT INTO usuarios (nome,email,senha_hash) VALUES (?,?,?)', [name, login, await hashPassword(senha)]);
@@ -104,6 +106,7 @@ app.post('/api/sair', async (req, res) => {
   res.clearCookie('cv_session', cookie).status(204).end();
 });
 app.get('/api/categorias', async (_req, res) => res.json(await rows(db, 'SELECT id,nome FROM categorias ORDER BY nome')));
+registerAddressRoutes(app, { inside:inSaoPaulo, requireUser, fail });
 registerFeatures(app, db, { requireUser, rows, fail, clean, id });
 const selectReport = 'SELECT p.*, EXISTS(SELECT 1 FROM confirmacoes x WHERE x.ocorrencia_id=p.id AND x.usuario_id=?) AS confirmada, EXISTS(SELECT 1 FROM acompanhamentos a WHERE a.ocorrencia_id=p.id AND a.usuario_id=?) AS acompanhando, (SELECT count(*) FROM comentarios c WHERE c.ocorrencia_id=p.id) AS comentarios FROM painel_ocorrencias p';
 app.get('/api/ocorrencias', async (req, res) => {
@@ -121,13 +124,19 @@ app.get('/api/ocorrencias', async (req, res) => {
     if (!states.includes(req.query.status)) fail(400, 'Status inválido.');
     filters.push('status=?'); params.push(req.query.status);
   }
+  if (req.query.periodo) {
+    if (!['7','30','90'].includes(req.query.periodo)) fail(400, 'Período inválido.');
+    filters.push('p.criado_em >= DATE_SUB(NOW(), INTERVAL ? DAY)');
+    params.push(Number(req.query.periodo));
+  }
   if (req.query.busca) {
-    const value = clean(req.query.busca, 100);
+    const value = clean(req.query.busca, 100, 0, 'O termo de busca');
     filters.push("(LOCATE(?,titulo)>0 OR LOCATE(?,endereco)>0 OR LOCATE(?,descricao)>0)");
     params.push(value, value, value);
   }
   const where = filters.length ? ' WHERE ' + filters.join(' AND ') : '';
-  const order = req.query.ordem === 'recente' ? 'p.criado_em DESC' : "(p.status='resolvida'), p.prioridade DESC, p.criado_em DESC";
+  const ordering = { recente:'p.criado_em DESC', confirmadas:'p.confirmacoes DESC, p.criado_em DESC', antigas:'p.criado_em ASC' };
+  const order = Object.hasOwn(ordering, req.query.ordem) ? ordering[req.query.ordem] : "(p.status='resolvida'), p.prioridade DESC, p.criado_em DESC";
   const page = req.query.pagina ? id(req.query.pagina) : 1;
   const reports = await rows(db, selectReport + where + ' ORDER BY ' + order + ',p.id DESC LIMIT 101 OFFSET ?', [...params, (page - 1) * 100]);
   res.json({ ocorrencias: reports.slice(0, 100), mais: reports.length > 100 });
@@ -148,14 +157,14 @@ function imageType(buffer) {
 }
 app.post('/api/ocorrencias', requireUser, upload.single('foto'), async (req, res) => {
   const data = req.body || {};
-  const title = clean(data.titulo, 100, 5);
-  const description = clean(data.descricao, 2000, 10);
-  const address = clean(data.endereco, 250) || null;
+  const title = clean(data.titulo, 100, 5, 'O título');
+  const description = clean(data.descricao, 2000, 10, 'A descrição');
+  const address = clean(data.endereco, 250, 0, 'O endereço') || null;
   const coordinate = (value, limit) => {
     if (value == null || value === '') return null;
-    if (typeof value !== 'string' && typeof value !== 'number') fail(400, 'Coordenadas inválidas.');
+    if (typeof value !== 'string' && typeof value !== 'number') fail(400, 'Confira a latitude e a longitude.');
     const number = Number(value);
-    if (!Number.isFinite(number) || Math.abs(number) > limit || !String(value).trim()) fail(400, 'Coordenadas inválidas.');
+    if (!Number.isFinite(number) || Math.abs(number) > limit || !String(value).trim()) fail(400, 'Confira a latitude e a longitude.');
     return number;
   };
   const lat = coordinate(data.latitude, 90);
@@ -165,8 +174,12 @@ app.post('/api/ocorrencias', requireUser, upload.single('foto'), async (req, res
   const category = id(data.categoria_id);
   const reportId = await transaction(db, async conn => {
     if (!(await rows(conn, 'SELECT id FROM categorias WHERE id=?', [category])).length) fail(400, 'Selecione uma categoria válida.');
-    const location = await rows(conn, 'INSERT INTO locais (endereco,latitude,longitude) VALUES (?,?,?)', [address, lat, lng]);
-    await rows(conn, 'INSERT INTO locais_verificados VALUES (?,3550308)', [location.insertId]);
+    const location = await rows(conn, usesLegacyLocations
+      ? 'INSERT INTO locais (endereco,latitude,longitude) VALUES (?,?,?)'
+      : 'INSERT INTO locais (endereco,latitude,longitude,municipio_codigo) VALUES (?,?,?,3550308)', [address, lat, lng]);
+    if (usesLegacyLocations) {
+      await rows(conn, 'INSERT INTO locais_verificados (local_id,municipio_codigo) VALUES (?,3550308)', [location.insertId]);
+    }
     const report = await rows(conn, 'INSERT INTO ocorrencias (autor_id,categoria_id,local_id,titulo,descricao) VALUES (?,?,?,?,?)', [req.user.id, category, location.insertId, title, description]);
     if (req.file) await rows(conn, 'INSERT INTO fotos (ocorrencia_id,tipo,conteudo) VALUES (?,?,?)', [report.insertId, type, req.file.buffer]);
     await rows(conn, "INSERT INTO historico_status (ocorrencia_id,usuario_id,status) VALUES (?,?,'aberta')", [report.insertId, req.user.id]);
@@ -174,6 +187,21 @@ app.post('/api/ocorrencias', requireUser, upload.single('foto'), async (req, res
   });
   res.status(201).json({ id: reportId });
 });
+  app.patch('/api/ocorrencias/:id/relato', requireUser, async (req, res) => {
+    const reportId = id(req.params.id);
+    const title = clean(req.body?.titulo,100,5,'O título');
+    const description = clean(req.body?.descricao,2000,10,'A descrição');
+    const category = id(req.body?.categoria_id);
+    await transaction(db, async conn => {
+      const [report] = await rows(conn,'SELECT autor_id,status FROM ocorrencias WHERE id=? FOR UPDATE',[reportId]);
+      if (!report) fail(404,'Ocorrência não encontrada.');
+      if (report.autor_id !== req.user.id) fail(403,'Só quem publicou o relato pode editá-lo.');
+      if (report.status !== 'aberta') fail(409,'Só é possível editar um relato que ainda esteja aberto.');
+      if (!(await rows(conn,'SELECT id FROM categorias WHERE id=?',[category])).length) fail(400,'Selecione uma categoria válida.');
+      await rows(conn,'UPDATE ocorrencias SET titulo=?,descricao=?,categoria_id=? WHERE id=?',[title,description,category,reportId]);
+    });
+    res.status(204).end();
+  });
 app.get('/api/fotos/:id', async (req, res) => {
   const [photo] = await rows(db, `SELECT f.tipo,f.conteudo FROM fotos f JOIN ocorrencias p ON p.id=f.ocorrencia_id WHERE f.id=? AND ${scope}`, [id(req.params.id)]);
   if (!photo) fail(404, 'Foto não encontrada.');
@@ -184,18 +212,18 @@ app.put('/api/ocorrencias/:id/confirmacao', requireUser, async (req, res) => {
     const reportId = id(req.params.id);
     const [report] = await rows(conn, 'SELECT autor_id,status FROM ocorrencias WHERE id=? FOR UPDATE', [reportId]);
     if (!report) fail(404, 'Ocorrência não encontrada.');
-    if (report.autor_id === req.user.id) fail(403, 'A confirmação deve vir de outro cidadão.');
+    if (report.autor_id === req.user.id) fail(403, 'Você só pode confirmar relatos de outras pessoas.');
     if (report.status === 'resolvida') fail(409, 'Esta ocorrência já foi resolvida.');
     await rows(conn, 'INSERT INTO confirmacoes (usuario_id,ocorrencia_id) VALUES (?,?) ON DUPLICATE KEY UPDATE criado_em=criado_em', [req.user.id, reportId]);
   });
   res.status(204).end();
 });
 app.patch('/api/ocorrencias/:id/status', requireUser, async (req, res) => {
-  if (req.user.papel !== 'admin') fail(403, 'Acesso reservado à administração.');
+  if (req.user.papel !== 'admin') fail(403, 'Só a administração pode mudar o status.');
   const reportId = id(req.params.id);
   const { status, nota } = req.body || {};
   if (!states.includes(status)) fail(400, 'Status inválido.');
-  const note = clean(nota, 500) || null;
+  const note = clean(nota, 500, 0, 'A observação') || null;
   await transaction(db, async conn => {
     const [report] = await rows(conn, 'SELECT status FROM ocorrencias WHERE id=? FOR UPDATE', [reportId]);
     if (!report) fail(404, 'Ocorrência não encontrada.');
@@ -212,11 +240,11 @@ app.use('/maplibre', express.static(resolve(appRoot, 'node_modules/maplibre-gl/d
 app.use('/leaflet', express.static(resolve(appRoot, 'node_modules/leaflet/dist')));
 app.use(express.static(resolve(appRoot, 'public')));
 app.use((error, _req, res, _next) => {
-  if (error instanceof multer.MulterError) return res.status(400).json({ erro: error.code === 'LIMIT_FILE_SIZE' ? 'A foto deve ter até 5 MB.' : 'Confira os campos e envie no máximo uma foto.' });
+  if (error instanceof multer.MulterError) return res.status(400).json({ erro: error.code === 'LIMIT_FILE_SIZE' ? 'A foto deve ter até 5 MB.' : 'Envie apenas uma foto e confira os campos do formulário.' });
   if (error.code === 'ER_DUP_ENTRY') return res.status(409).json({ erro: 'Este e-mail já está cadastrado.' });
   const status = error.status || 500;
   if (status >= 500) console.error(error);
-  res.status(status).json({ erro: status >= 500 ? 'Não foi possível concluir a operação.' : status === 413 ? 'O conteúdo é grande demais.' : error.message });
+  res.status(status).json({ erro: status >= 500 ? 'Não foi possível concluir. Tente novamente em instantes.' : status === 413 ? 'O conteúdo é grande demais.' : error.message });
 });
 const port = Number(process.env.PORT || 3333);
 const server = app.listen(port, process.env.HOST || '127.0.0.1', () => console.log('Cidade Viva: http://localhost:' + port));
