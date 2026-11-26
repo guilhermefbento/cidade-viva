@@ -1,6 +1,8 @@
 # Modelo de dados do Cidade Viva
 
-O modelo implementa onze entidades de negócio e uma tabela de apoio à autenticação. Os atributos e as restrições estão em [db/schema.sql](../db/schema.sql) e [db/upgrade.sql](../db/upgrade.sql).
+O esquema para novas instalações implementa dez entidades de negócio e uma tabela de apoio à autenticação. Os atributos e as restrições estão em [db/schema.sql](../db/schema.sql) e [db/upgrade.sql](../db/upgrade.sql).
+
+Instalações anteriores mantêm a tabela `locais_verificados` até a migração administrativa. A migração copia e verifica os códigos antes de remover a tabela. Com o servidor parado, execute `node db/migrate-locations.mjs` a partir da raiz do projeto. Forneça as credenciais administrativas temporárias pelas variáveis `DB_MIGRATION_USER` e `DB_MIGRATION_PASSWORD`.
 
 ```mermaid
 erDiagram
@@ -13,7 +15,6 @@ erDiagram
     OCORRENCIAS ||--|{ HISTORICO_STATUS : registra
     USUARIOS ||--o{ HISTORICO_STATUS : altera
     USUARIOS ||--o{ SESSOES : abre
-    LOCAIS ||--o| LOCAIS_VERIFICADOS : valida
     OCORRENCIAS ||--o{ ACOMPANHAMENTOS : recebe
     USUARIOS ||--o{ ACOMPANHAMENTOS : segue
     OCORRENCIAS ||--o{ COMENTARIOS : recebe
@@ -35,6 +36,7 @@ erDiagram
       varchar endereco
       double latitude
       double longitude
+      int municipio_codigo
     }
     OCORRENCIAS {
       int id PK
@@ -63,6 +65,26 @@ erDiagram
       varchar status
       varchar nota
     }
+    ACOMPANHAMENTOS {
+      int usuario_id PK,FK
+      int ocorrencia_id PK,FK
+      timestamp criado_em
+    }
+    COMENTARIOS {
+      int id PK
+      int usuario_id FK
+      int ocorrencia_id FK
+      varchar texto
+      timestamp criado_em
+    }
+    NOTIFICACOES {
+      int id PK
+      int usuario_id FK
+      int ocorrencia_id FK
+      varchar mensagem
+      boolean lida
+      timestamp criado_em
+    }
     SESSOES {
       char token_hash PK
       int usuario_id FK
@@ -77,6 +99,6 @@ erDiagram
 - As sessões expiram em sete dias. O banco armazena o hash da senha com scrypt e o hash do token de sessão.
 
 
-- O local é verificado pelo polígono do IBGE e recebe o código 3550308 quando está dentro de São Paulo. O código zero identifica locais antigos sem ponto válido no município.
+- O local é verificado pelo polígono do IBGE. O código 3550308 é armazenado em `locais.municipio_codigo` quando o ponto está dentro de São Paulo. O código zero identifica locais antigos sem ponto válido no município.
 - Acompanhamentos usam a chave composta de usuário e ocorrência. Mudanças de status geram um aviso ao autor e aos seguidores, com a mesma transação do histórico.
 - Comentários guardam autor e ocorrência. O autor do comentário ou a administração pode excluí-lo.
