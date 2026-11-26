@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS locais (
  endereco varchar(250),
  latitude double,
  longitude double,
+ municipio_codigo integer,
  CHECK (endereco IS NOT NULL OR latitude IS NOT NULL),
  CHECK ((latitude IS NULL) = (longitude IS NULL)),
  CHECK (latitude BETWEEN -90 AND 90 AND longitude BETWEEN -180 AND 180)

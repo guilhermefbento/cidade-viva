@@ -1,8 +1,3 @@
-CREATE TABLE IF NOT EXISTS locais_verificados (
- local_id integer PRIMARY KEY,
- municipio_codigo integer NOT NULL,
- FOREIGN KEY (local_id) REFERENCES locais(id) ON DELETE CASCADE
-);
 CREATE TABLE IF NOT EXISTS acompanhamentos (
  usuario_id integer NOT NULL,
  ocorrencia_id integer NOT NULL,
