@@ -1,14 +1,16 @@
+import { connectAddress } from './address.js';
+import { protocol } from './tracking.js';
 import { containsPoint } from './territory.js';
 import { connectPortal } from './portal.js';
 const $ = selector => document.querySelector(selector);
 const statuses = { aberta: 'Aberta', andamento: 'Em andamento', resolvida: 'Resolvida' };
-const center = [-23.60, -46.65];
 let territory;
 let portal;
 const reportForm = $('#report-form');
 const filters = $('#filters');
 const authForm = $('#auth-form');
-let user, signup = false, afterAuth, reportMap, markers, pickMap, pin;
+let user, signup = false, afterAuth, pickMap, pickerPromise, reportMapPromise;
+let categoryOptions = [];
 let reports = [], page = 0, request = 0, detailRequest = 0;
 const date = value => new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(value));
 function element(tag, content, style) {
@@ -30,10 +32,15 @@ async function api(path, method = 'GET', body) {
     options.headers = { 'Content-Type': 'application/json' };
     options.body = JSON.stringify(body);
   }
-  const response = await fetch('/api' + path, options);
-  if (response.status === 204) return;
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.erro || 'Falha de comunicação com o servidor.');
+  let response, data;
+  try {
+    response = await fetch('/api' + path, options);
+    if (response.status === 204) return;
+    data = await response.json();
+  } catch {
+    throw new Error('Não foi possível conectar ao Cidade Viva. Tente novamente.');
+  }
+  if (!response.ok) throw new Error(data.erro || 'Não foi possível carregar os dados. Tente novamente.');
   return data;
 }
 function error(container, message = '') {
@@ -47,7 +54,7 @@ function notice(message = '') {
 }
 async function submit(form, work) {
   error(form);
-  const submitButton = form.querySelector('button:not([type]),button[type=submit]');
+  const submitButton = Array.from(form.elements).find(control => control instanceof HTMLButtonElement && control.type === 'submit');
   submitButton.disabled = true;
   try { await work(); } catch (failure) { error(form, failure.message); }
   finally { submitButton.disabled = false; }
@@ -62,7 +69,7 @@ function setUser(value) {
 function setAuthMode(mode) {
   signup = mode;
   $('#auth-title').textContent = signup ? 'Criar conta' : 'Entrar';
-  $('#auth-submit').textContent = signup ? 'Criar minha conta' : 'Entrar';
+  $('#auth-submit').textContent = signup ? 'Criar conta' : 'Entrar';
   $('#auth-mode').textContent = signup ? 'Já tenho conta' : 'Criar conta';
   $('#name-field').hidden = !signup;
   authForm.elements.nome.required = signup;
@@ -84,7 +91,7 @@ $('#auth').onclick = async () => {
     setUser(null);
     if (portal.scope()) location.hash='explorar';
     else await load();
-    notice('Você saiu da sua conta.');
+    notice('Você saiu da conta.');
   } catch (failure) { notice(failure.message); }
 };
 authForm.onsubmit = event => {
@@ -99,70 +106,154 @@ authForm.onsubmit = event => {
     await load();
   });
 };
-function mapOn(target) {
-  if (!window.L) return null;
-  const map = L.map(target).setView(center, 12);
-  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-  }).addTo(map);
-  if(territory) L.geoJSON(territory,{color:'#a0bd45',fillOpacity:.045,interactive:false}).addTo(map);
-  return map;
-}
-function syncPin() {
-  if (!pickMap) return;
-  if (pin) { pin.remove(); pin = null; }
-  const { latitude, longitude } = reportForm.elements;
-  if (latitude.value && longitude.value && latitude.validity.valid && longitude.validity.valid) {
-    const point = [Number(latitude.value), Number(longitude.value)];
-    pin = L.marker(point).addTo(pickMap);
-    pickMap.panTo(point);
+async function preparePicker() {
+  if (!pickerPromise) {
+    const container = $('#pick-map');
+    const select = (lat,lng) => setPoint(lat.toFixed(6),lng.toFixed(6));
+    pickerPromise = import('./city-map.js').then(module => module.createLocationMap(container,select)).catch(async () => {
+      const crosshair=container.querySelector('.map-crosshair');
+      container.replaceChildren(crosshair);
+      const { fallbackPicker } = await import('./map-fallback.js');
+      return fallbackPicker(container,select);
+    }).catch(() => null);
   }
+  pickMap = await pickerPromise;
+  if (!$('#create-dialog').open) return;
+  $('#mark-center').disabled = !pickMap;
+  if (!pickMap) {
+    $('#map-coverage').textContent = 'Não foi possível abrir o mapa. Use sua localização ou informe as coordenadas.';
+    return;
+  }
+  pickMap.resize();
+  syncPin();
 }
-function setPoint(lat, lng) {
-  if (lat != null && lng != null && territory && !containsPoint(territory,Number(lat),Number(lng))) {
-    error(reportForm,'Escolha um ponto dentro do município de São Paulo.');
+let suggestionVersion = 0;
+let suggestionTimer;
+let locationVersion = 0;
+function updateSuggestions(valid) {
+  const version = ++suggestionVersion;
+  clearTimeout(suggestionTimer);
+  const panel = $('#similar-reports');
+  panel.hidden = true;
+  const {latitude,longitude,categoria_id} = reportForm.elements;
+  if (!valid || !categoria_id.value || !$('#create-dialog').open) return;
+  const query = new URLSearchParams({lat:latitude.value,lng:longitude.value,categoria:categoria_id.value,raio:'150',status:'pendentes'});
+  suggestionTimer = setTimeout(async () => {
+    try {
+      const {ocorrencias} = await api('/proximas?' + query);
+      if (version !== suggestionVersion || !$('#create-dialog').open) return;
+      const items = ocorrencias.slice(0,3).map(report => {
+        const item = button('', () => detail(report.id), 'similar-item');
+        item.append(element('strong',report.titulo),element('small',statuses[report.status]+' · '+Math.round(report.distancia)+' m ↗'));
+        return item;
+      });
+      $('#similar-list').replaceChildren(...items);
+      panel.hidden = !items.length;
+    } catch { /* A consulta complementar pode falhar sem impedir a publicação. */ }
+  },250);
+}
+reportForm.elements.categoria_id.addEventListener('change',()=>syncPin());
+function syncPin(recenter = false) {
+  const { latitude, longitude } = reportForm.elements;
+  const lat=Number(latitude.value), lng=Number(longitude.value);
+  const complete=latitude.value!=='' && longitude.value!=='';
+  const valid=complete && latitude.validity.valid && longitude.validity.valid && territory && containsPoint(territory,lat,lng);
+  updateSuggestions(valid);
+  pickMap?.setPoint(valid?lat:null,valid?lng:null,recenter);
+  $('#point-feedback').textContent = valid ? 'Local marcado no mapa.' : complete ? 'Essas coordenadas estão fora da cidade de São Paulo.' : 'Nenhum local marcado.';
+  return Boolean(valid);
+}
+function selectPoint(lat,lng,recenter=false) {
+  locationVersion++;
+  const invalid = lat!=null && (!territory || !containsPoint(territory,Number(lat),Number(lng)));
+  reportForm.elements.latitude.value = invalid || lat==null ? '' : Number(lat).toFixed(6);
+  reportForm.elements.longitude.value = invalid || lng==null ? '' : Number(lng).toFixed(6);
+  syncPin(recenter&&!invalid);
+  return !invalid;
+}
+const linkedAddress = connectAddress(reportForm,{selectPoint});
+function setPoint(lat,lng,recenter=false) {
+  if (!selectPoint(lat,lng,recenter)) {
+    linkedAddress.clear();
+    error(reportForm,'Escolha um local dentro da cidade de São Paulo.');
     return;
   }
   error(reportForm);
-  reportForm.elements.latitude.value = lat ?? '';
-  reportForm.elements.longitude.value = lng ?? '';
-  syncPin();
+  if (lat==null || lng==null) linkedAddress.clear();
+  else linkedAddress.point(lat,lng);
 }
 function createReport() {
   if (!user) return openAuth(createReport);
   reportForm.reset();
+  linkedAddress.clear();
+  clearPhoto();
   error(reportForm);
   $('#create-dialog').showModal();
-  if (!pickMap) {
-    pickMap = mapOn('pick-map');
-    pickMap?.on('click', ({ latlng }) => setPoint(latlng.lat.toFixed(6), latlng.lng.toFixed(6)));
-  }
-  pickMap?.invalidateSize();
   syncPin();
+  preparePicker();
 }
 $('#create').onclick = createReport;
+$('#mark-center').onclick = () => pickMap?.useCenter();
 $('#clear-location').onclick = () => setPoint(null, null);
-for (const name of ['latitude', 'longitude']) reportForm.elements[name].onchange = syncPin;
-$('#locate').onclick = () => {
-  if (!navigator.geolocation) return error(reportForm, 'Localização indisponível neste navegador.');
+for (const name of ['latitude', 'longitude']) reportForm.elements[name].onchange = () => {
+  locationVersion++;
   error(reportForm);
+  if(syncPin(true)) linkedAddress.point(reportForm.elements.latitude.value, reportForm.elements.longitude.value, true);
+  else linkedAddress.clear(true);
+};
+$('#locate').onclick = () => {
+  if (!navigator.geolocation) return error(reportForm, 'Este navegador não permite usar sua localização. Marque o local no mapa.');
+  error(reportForm);
+  const ownLocation = ++locationVersion;
   navigator.geolocation.getCurrentPosition(
-    ({ coords }) => setPoint(coords.latitude.toFixed(6), coords.longitude.toFixed(6)),
-    () => error(reportForm, 'Não foi possível obter sua localização. Marque um ponto no mapa.'),
+    ({ coords }) => { if(ownLocation===locationVersion && $('#create-dialog').open) setPoint(coords.latitude.toFixed(6),coords.longitude.toFixed(6),true); },
+    () => { if(ownLocation===locationVersion && $('#create-dialog').open) error(reportForm, 'Não foi possível usar sua localização. Marque o local no mapa.'); },
     { timeout: 10000 }
   );
 };
+const photoField=reportForm.elements.foto;
+let photoUrl;
+function clearPhoto() {
+  if (photoUrl) URL.revokeObjectURL(photoUrl);
+  photoUrl=undefined;
+  $('#photo-preview').hidden=true;
+  $('#photo-preview img').removeAttribute('src');
+  $('#photo-feedback').textContent='';
+}
+$('#create-dialog').addEventListener('close',()=>{ locationVersion++; updateSuggestions(false); clearPhoto(); linkedAddress.clear(); });
+$('#remove-photo').onclick=()=>{
+  photoField.value='';
+  clearPhoto();
+  photoField.focus();
+};
+photoField.onchange=()=>{
+  clearPhoto();
+  const file=photoField.files?.[0];
+  if(!file) return;
+  if (file.size>5*1024*1024 || (file.type&&!['image/jpeg','image/png','image/webp'].includes(file.type))) {
+    photoField.value='';
+    $('#photo-feedback').textContent='A foto precisa ser JPEG, PNG ou WebP e ter até 5 MB.';
+    return;
+  }
+  photoUrl=URL.createObjectURL(file);
+  $('#photo-preview img').src=photoUrl;
+  $('#photo-preview').hidden=false;
+};
+
 reportForm.onsubmit = event => {
   event.preventDefault();
+  if(linkedAddress.pending()) return error(reportForm,'Aguarde a consulta de endereço terminar antes de publicar.');
+  if(!syncPin()) return error(reportForm,'Marque no mapa onde ocorreu o problema. O local precisa ficar na cidade de São Paulo.');
   submit(reportForm, async () => {
     const data = new FormData(reportForm);
     if (!data.get('foto')?.size) data.delete('foto');
     const result = await api('/ocorrencias', 'POST', data);
     $('#create-dialog').close();
     filters.reset();
+    portal.syncFilters();
     await load();
     await portal.refresh();
-    notice('Ocorrência publicada.');
+    notice('Relato publicado. Protocolo '+protocol(result.id)+'.');
     await detail(result.id);
   });
 };
@@ -178,38 +269,40 @@ function photo(report, style) {
   img.loading = 'lazy';
   return img;
 }
-const locationText = report => report.endereco || (report.latitude != null ? report.latitude + ', ' + report.longitude : 'Local não informado');
+const locationText = report => report.endereco || (report.latitude != null ? report.latitude + ', ' + report.longitude : 'Sem localização');
 const confirmationText = report => report.confirmacoes + (Number(report.confirmacoes) === 1 ? ' confirmação' : ' confirmações');
+const commentText = count => count + (Number(count) === 1 ? ' comentário' : ' comentários');
 function render() {
-  $('#count').textContent = reports.length ? reports.length + (reports.length === 1 ? ' ocorrência exibida' : ' ocorrências exibidas') : 'Nenhuma ocorrência nos filtros atuais';
+  $('#count').textContent = reports.length ? reports.length + (reports.length === 1 ? ' ocorrência exibida' : ' ocorrências exibidas') : '0 ocorrências';
   const cards = reports.map(report => {
     const card = element('article', null, 'card');
     if (report.foto_id) card.append(photo(report, 'card-photo'));
-    card.append(tags(report), element('h3', report.titulo), element('p', locationText(report), 'muted'), element('small', confirmationText(report) + ' · ' + report.comentarios + ' comentário(s) · ' + date(report.criado_em)), button('Ver ocorrência', () => detail(report.id)));
+    card.append(element('small',protocol(report.id),'report-protocol'),tags(report), element('h3', report.titulo), element('p', locationText(report), 'muted'), element('small', confirmationText(report) + ' · ' + commentText(report.comentarios) + ' · ' + date(report.criado_em)), button('Ver ocorrência', () => detail(report.id)));
     return card;
   });
-  $('#cards').replaceChildren(...(cards.length ? cards : [element('div', 'Nenhuma ocorrência encontrada. Ajuste os filtros ou registre um problema no seu bairro.', 'empty')]));
+  const hasFilters = ['busca','categoria','status','periodo'].some(name => filters.elements[name].value);
+  const emptyText = hasFilters ? 'Não há relatos com esses filtros. Limpe os filtros para ver mais.' : 'Ainda não há ocorrências nesta lista.';
+  $('#cards').replaceChildren(...(cards.length ? cards : [element('div', emptyText, 'empty')]));
   if (!$('#map-panel').hidden) renderMap();
   portal.update(reports);
 }
-function renderMap() {
-  reportMap ||= mapOn('report-map');
-  if (!reportMap) { $('#map-count').textContent = 'O mapa está indisponível.'; return; }
-  reportMap.invalidateSize();
-  markers?.remove();
-  markers = L.featureGroup().addTo(reportMap);
-  let count = 0;
-  for (const report of reports) {
-    if (report.latitude == null) continue;
-    const popup = element('div');
-    popup.append(element('p', report.titulo), button('Ver ocorrência', () => detail(report.id)));
-    L.marker([report.latitude, report.longitude]).bindPopup(popup).addTo(markers);
-    count++;
+async function renderMap() {
+  const container=$('#report-map');
+  if(!reportMapPromise) {
+    reportMapPromise=import('./city-map.js').then(module => module.createCityMap(container,detail,{flat:true,fitReports:true})).catch(async () => {
+      container.replaceChildren();
+      const { fallbackReports } = await import('./map-fallback.js');
+      return fallbackReports(container,detail,{fitReports:true});
+    }).catch(()=>null);
   }
-  $('#map-count').textContent = count + (count === 1 ? ' ocorrência no mapa' : ' ocorrências no mapa');
-  if (count) reportMap.fitBounds(markers.getBounds(), { padding: [25, 25], maxZoom: 16 });
-  else reportMap.setView(center, 12);
+  const reportMap=await reportMapPromise;
+  if($('#map-panel').hidden) return;
+  if(!reportMap) { $('#map-count').textContent='Não foi possível abrir o mapa. Use a lista para consultar os relatos.'; return; }
+  reportMap.resize();
+  const count=reportMap.update(reports);
+  $('#map-count').textContent=count+(count===1?' ocorrência no mapa':' ocorrências no mapa');
 }
+
 function view(mode) {
   $('#cards').hidden = mode !== 'list';
   $('#map-panel').hidden = mode !== 'map';
@@ -241,7 +334,7 @@ async function load(append = false) {
   } catch (failure) { if (generation === request) notice(failure.message); }
   finally { if (generation === request) $('#more').disabled = false; }
 }
-filters.onsubmit = event => { event.preventDefault(); load(); };
+filters.onsubmit = event => { event.preventDefault(); portal.syncFilters(); load(); };
 for (const select of filters.querySelectorAll('select')) select.onchange = () => load();
 $('#more').onclick = () => load(true);
 function adminForm(report) {
@@ -283,7 +376,7 @@ async function detail(id) {
     const report = await api('/ocorrencias/' + id);
     if (generation !== detailRequest || !modal.open) return;
     const panel = element('article', null, 'details');
-    panel.append(element('h2', report.titulo), tags(report));
+    panel.append(element('p', protocol(report.id), 'protocol-copy'), element('h2', report.titulo), tags(report));
     if (report.foto_id) panel.append(photo(report, 'detail-photo'));
     panel.append(element('p', report.descricao, 'detail-data'), element('p', locationText(report), 'muted'), element('p', confirmationText(report)));
     if (report.status !== 'resolvida' && user?.id !== report.autor_id && !report.confirmada) {
@@ -307,16 +400,90 @@ async function detail(id) {
       }, 'action');
       panel.append(confirm, feedback);
     } else if (report.confirmada) panel.append(element('p', 'Você confirmou esta ocorrência.', 'muted'));
+    panel.append(shareReport(report));
+    if (user?.id === report.autor_id && report.status === 'aberta') panel.append(editReport(report));
     if (user?.papel === 'admin') panel.append(adminForm(report));
     panel.append(socialPanel(report));
     const history = element('ol', null, 'history');
-    for (const entry of report.historico) history.append(element('li', statuses[entry.status] + ' · ' + date(entry.criado_em) + (entry.nota ? ' · ' + entry.nota : '')));
+    for (const entry of report.historico) {
+      const event = element('li', null, 'history-event '+entry.status);
+      const time = element('time', date(entry.criado_em));
+      time.dateTime = new Date(entry.criado_em).toISOString();
+      event.append(element('strong',statuses[entry.status]), time);
+      if (entry.nota) event.append(element('p',entry.nota));
+      history.append(event);
+    }
     panel.append(element('h3', 'Histórico'), history);
     body.replaceChildren(panel);
   } catch (failure) {
     if (generation === detailRequest) body.replaceChildren(element('p', failure.message, 'error'));
   }
 }
+function shareReport(report) {
+  const row = element('div',null,'details');
+  const feedback = element('div',null,'muted share-feedback');
+  feedback.setAttribute('role','status');
+  const link = new URL(location.href);
+  link.hash = 'ocorrencia/' + report.id;
+  row.append(button('Copiar link da ocorrência',async () => {
+    try {
+      await navigator.clipboard.writeText(link.href);
+      feedback.textContent = 'Link copiado.';
+    } catch {
+      const field = element('input');
+      field.value = link.href;
+      field.readOnly = true;
+      field.setAttribute('aria-label','Link para compartilhar');
+      feedback.replaceChildren(element('p','Copie o link abaixo para compartilhar.'),field);
+      field.focus();
+      field.select();
+    }
+  }),feedback);
+  return row;
+}
+
+function editReport(report) {
+  const section = element('details',null,'detail-actions');
+  section.append(element('summary','Editar meu relato'));
+  const form = element('form');
+  function field(labelText, name, control) {
+    const label = element('label',labelText);
+    control.name = name;
+    control.required = true;
+    label.append(control);
+    form.append(label);
+  }
+  const title = element('input');
+  title.value = report.titulo;
+  title.minLength = 5;
+  title.maxLength = 100;
+  field('Título','titulo',title);
+  const category = element('select');
+  for (const option of categoryOptions) category.add(new Option(option.nome,option.id,false,option.id===report.categoria_id));
+  field('Categoria','categoria_id',category);
+  const description = element('textarea');
+  description.value = report.descricao;
+  description.minLength = 10;
+  description.maxLength = 2000;
+  description.rows = 4;
+  field('Descrição','descricao',description);
+  const feedback = element('p',null,'error');
+  feedback.hidden = true;
+  feedback.setAttribute('role','alert');
+  form.append(feedback,element('button','Salvar alterações','action'));
+  form.onsubmit = event => {
+    event.preventDefault();
+    submit(form,async () => {
+      await api('/ocorrencias/'+report.id+'/relato','PATCH',Object.fromEntries(new FormData(form)));
+      await load();
+      await portal.refresh();
+      if ($('#detail').open) await detail(report.id);
+    });
+  };
+  section.append(form);
+  return section;
+}
+
 function socialPanel(report) {
   const section=element('section',null,'details');
   const actions=element('div',null,'row');
@@ -397,6 +564,7 @@ portal = connectPortal({
 try {
   const [session, categories, boundary] = await Promise.all([api('/sessao'), api('/categorias'), fetch('/data/sao-paulo.geojson').then(r=>r.json())]);
   territory=boundary;
+  categoryOptions=categories;
   setUser(session.usuario);
   for (const category of categories) {
     filters.elements.categoria.add(new Option(category.nome, category.id));
@@ -405,6 +573,6 @@ try {
   }
   await portal.navigate();
 } catch (failure) {
-  $('#count').textContent = 'Painel indisponível';
+  $('#count').textContent = 'Não foi possível carregar as ocorrências';
   notice(failure.message);
 }

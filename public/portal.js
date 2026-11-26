@@ -1,14 +1,18 @@
+import { connectNearby } from './nearby.js';
+import { connectTracking } from './tracking.js';
 import { connectScrollVideo } from './scroll-video.js';
+import { connectParticipationRide } from './participation-ride.js';
 export function connectPortal(ui) {
   const { $, api, element, button, submit, notice, date, statuses, detail, load, view, filters, setUser, getUser, openAuth } = ui;
   const titles = {
-    explorar:['Explorar ocorrências','Encontre relatos no mapa ou na lista e filtre por tipo e situação.'],
-    minhas:['Meus relatos','Confira a situação das ocorrências que você registrou.'],
-    acompanhando:['Acompanhando','Consulte os relatos que você salvou para receber atualizações.'],
-    gestao:['Gestão de ocorrências','Organize os relatos por status e abra cada ficha para registrar uma atualização.'],
+    explorar:['Ocorrências em São Paulo','Veja os relatos em lista ou no mapa. Use os filtros para encontrar um problema específico.'],
+    minhas:['Meus relatos','Veja o que você registrou e edite os relatos que ainda estão abertos.'],
+    acompanhando:['Acompanhando','Veja as ocorrências que você escolheu acompanhar.'],
+    gestao:['Gestão de ocorrências','Abra uma ocorrência no quadro ou na lista para atualizar o status e deixar uma observação.'],
   };
-  const breadcrumb = {inicio:'Visão geral',indicadores:'Indicadores',como:'Como participar',...Object.fromEntries(Object.entries(titles).map(([key,value])=>[key,value[0]]))};
+  const breadcrumb = {perto:'Ocorrências por perto',inicio:'Início',indicadores:'Indicadores',como:'Como participar',central:'Acompanhar ocorrências',...Object.fromEntries(Object.entries(titles).map(([key,value])=>[key,value[0]]))};
   let current = 'inicio';
+  let explorerSearch = '';
   let cityMap, activeMapRequest = 0, latestSummary;
   let mapPromise;
   const arrival = $('#arrival-filters');
@@ -16,12 +20,38 @@ export function connectPortal(ui) {
   const journey = $('#journey');
   const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)');
   const portal = {
+    syncFilters,
     scope:()=>['minhas','acompanhando'].includes(current)?current:'',
     onUser,
     update,
     refresh,
   };
   document.body.classList.add('cinematic');
+  const header=$('#site-header');
+  const ride=$('#participate-ride');
+  const refreshNearby=connectNearby(ui);
+  const tracking=connectTracking({ $, api, element, date, statuses, detail });
+  const accountMenu=$('#account-menu');
+  const accountSummary=accountMenu.querySelector('summary');
+  const routeLinks=document.querySelectorAll('.site-nav [data-page]');
+
+  function updateHeaderBackdrop() {
+    const rideBounds=ride.getBoundingClientRect();
+    const onRide=ride.classList.contains('is-animated') && !ride.classList.contains('video-unavailable') && rideBounds.top<=0 && rideBounds.bottom>header.offsetHeight;
+    const onOpening=!journey.hidden && journey.getBoundingClientRect().bottom>header.offsetHeight;
+    header.classList.toggle('over-video',onOpening||onRide);
+  }
+  addEventListener('scroll',updateHeaderBackdrop,{passive:true});
+  function measureHeader() {
+    document.documentElement.style.setProperty('--site-header-height', header.offsetHeight+'px');
+    syncJourney();
+    updateHeaderBackdrop();
+  }
+  function closeAccount(restoreFocus=false) {
+    if(!accountMenu.open) return;
+    accountMenu.open=false;
+    if(restoreFocus) accountSummary.focus({preventScroll:true});
+  }
 
   function figure(label,value) {
     const card=element('article',null,'stat');
@@ -40,16 +70,31 @@ export function connectPortal(ui) {
       target.append(row);
     }
   }
+  function updateComparison() {
+    if (!latestSummary?.periodos) return;
+    const days = Number($('#period-window').value);
+    const counts = latestSummary.periodos;
+    const total = Number(counts['d'+days]);
+    $('#period-current').textContent = total;
+    $('#period-previous').textContent = Number(counts['d'+(days*2)]) - total;
+    $('#period-current-label').textContent = 'Últimos '+days+' dias';
+    $('#period-previous-label').textContent = days+' dias anteriores';
+    $('#period-link').href = '#explorar?periodo='+days;
+  }
+  $('#period-window').onchange = updateComparison;
   async function refresh() {
+    if(current==='perto') return refreshNearby();
+    if(current==='central') return tracking.refresh();
     if (!['inicio','indicadores'].includes(current)) return;
     try {
       const data=await api('/painel');
       latestSummary=data;
+      updateComparison();
       const total=data.totais;
       const metrics=[['Ocorrências',total.total],['Abertas',total.abertas],['Em andamento',total.andamento],['Resolvidas',total.resolvidas],['Confirmações',total.confirmacoes]];
       for (const target of ['#stats','#analytics-stats']) $(target).replaceChildren(...metrics.map(([label,value])=>figure(label,value)));
       const entries=data.categorias.map(c=>[c.categoria,c.total]);
-      if (!entries.length) $('#category-bars').replaceChildren(element('p','As categorias ganham dados quando o primeiro relato for publicado.','muted'));
+      if (!entries.length) $('#category-bars').replaceChildren(element('p','Ainda não há ocorrências para mostrar por categoria.','muted'));
       else bars($('#category-bars'),entries,Math.max(...entries.map(entry=>entry[1])));
       bars($('#status-chart'),metrics.slice(1,4),Number(total.total));
       const series=new Map(data.dias.map(d=>[d.dia,Number(d.total)]));
@@ -87,7 +132,7 @@ export function connectPortal(ui) {
       const total=cityMap?.update(ocorrencias)??ocorrencias.length;
       const wording=total===1?'1 ocorrência no mapa':total+' ocorrências no mapa';
       $('#overview-map-count').textContent=mais ? wording+' · veja mais na lista' : wording;
-      $('#recent-reports').replaceChildren(...(ocorrencias.length?ocorrencias.slice(0,5).map(reportRow):[element('p','Os primeiros relatos da comunidade aparecerão aqui.','muted')]));
+      $('#recent-reports').replaceChildren(...(ocorrencias.length?ocorrencias.slice(0,5).map(reportRow):[element('p','Ainda não há relatos para mostrar.','muted')]));
     } catch(error) { $('#overview-map-count').textContent=error.message; }
   }
   async function prepareMap() {
@@ -98,21 +143,9 @@ export function connectPortal(ui) {
         cityMap=createCityMap('overview-map',detail);
       } catch {
         mainMap.replaceChildren();
+        const { fallbackReports }=await import('./map-fallback.js');
         if (!window.L) return;
-        const map=L.map(mainMap,{scrollWheelZoom:false}).setView([-23.6127,-46.6991],13);
-        L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{ attribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' }).addTo(map);
-        fetch('/data/sao-paulo.geojson').then(r=>r.json()).then(geo=>L.geoJSON(geo,{color:'#659629',fillOpacity:.03}).addTo(map)).catch(()=>{});
-        const markers=L.layerGroup().addTo(map);
-        cityMap={
-          resize:()=>map.invalidateSize(),
-          bridge:()=>map.setView([-23.6127,-46.6991],14),
-          city:()=>map.setView([-23.70,-46.63],10),
-          update(reports){
-            markers.clearLayers();
-            for(const report of reports) L.marker([report.latitude,report.longitude]).addTo(markers).on('click',()=>detail(report.id));
-            return reports.length;
-          },
-        };
+        cityMap=fallbackReports(mainMap,detail);
         $('#map-mode').hidden=true;
       }
       await refreshArrival();
@@ -133,11 +166,47 @@ export function connectPortal(ui) {
     cityMap?.setPlanar?.(flat);
   };
   const syncJourney = connectScrollVideo(journey, $('#journey-video'), $('#scroll-hint'), reduceMotion);
-  $('#journey-notifications').onclick=()=>$('#notifications').click();
-  $('#journey-auth').onclick=()=>$('#auth').click();
+  connectParticipationRide(ride);
+  measureHeader();
+  new ResizeObserver(measureHeader).observe(header);
+  accountMenu.addEventListener('keydown',event=>{
+    if(event.key==='Escape' && accountMenu.open) { event.preventDefault(); closeAccount(true); }
+  });
+  accountMenu.addEventListener('click',event=>{
+    if(event.target.closest('.account-links a, .account-links button')) closeAccount(true);
+  },true);
+  document.addEventListener('pointerdown',event=>{
+    if(!accountMenu.contains(event.target)) closeAccount();
+  });
+  document.querySelector('.skip-link').addEventListener('click',event=>{
+    event.preventDefault();
+    $('#content').focus({preventScroll:true});
+    $('#content').scrollIntoView({block:'start'});
+  });
   $('#hero-create').onclick=()=>$('#create').click();
   document.querySelectorAll('.create-shortcut').forEach(node=>node.onclick=()=>$('#create').click());
-  $('#reset-filters').onclick=()=>{filters.reset();load();};
+  function syncFilters() {
+    if(current!=='explorar') return;
+    const params=new URLSearchParams(new FormData(filters));
+    for(const [name,value] of [...params]) {
+      if(!value || (name==='ordem' && value==='prioridade')) params.delete(name);
+    }
+    explorerSearch=params.toString();
+    history.replaceState(null,'','#explorar'+(explorerSearch?'?'+explorerSearch:''));
+  }
+  $('#share-search').onclick=async ()=>{
+    syncFilters();
+    load();
+    try {
+      await navigator.clipboard.writeText(location.href);
+      notice('Link da busca copiado.');
+    } catch { notice('A busca está na barra de endereço. Copie o link por lá.'); }
+  };
+  $('#reset-filters').onclick=()=>{
+    filters.reset();
+    if(current==='explorar' && explorerSearch) { explorerSearch=''; history.replaceState(null,'','#explorar'); }
+    load();
+  };
 
   function renderBoard(reports) {
     $('#board').replaceChildren(...Object.entries(statuses).map(([status,label])=>{
@@ -150,36 +219,66 @@ export function connectPortal(ui) {
   }
   function update(reports) { if(current==='gestao') renderBoard(reports); }
 
-  async function navigate() {
+  async function navigate({focus=false}={}) {
     const hash=location.hash.slice(1);
-    const route=hash==='mapa'?'inicio':Object.hasOwn(breadcrumb,hash)?hash:'inicio';
+    const [path, search=''] = hash.split('?');
+    const reportLink = /^ocorrencia\/(\d{1,10})$/.exec(path);
+    const route=reportLink?'central':path==='content'?current:(path==='mapa'||path==='participate-ride')?'inicio':Object.hasOwn(breadcrumb,path)?path:'inicio';
     const previous=current;
     current=route;
     const home=route==='inicio';
     document.body.classList.toggle('cinematic',home);
     journey.hidden=!home;
+    updateHeaderBackdrop();
     syncJourney();
     $('#page-inicio').hidden=!home;
-    for(const name of ['indicadores','como']) $('#page-'+name).hidden=route!==name;
+    for(const name of ['indicadores','como','central','perto']) $('#page-'+name).hidden=route!==name;
     $('#page-explorar').hidden=!titles[route];
-    $('#breadcrumb').textContent=breadcrumb[route];
-    document.querySelectorAll('.side-nav [data-page]').forEach(link=>{
-      if(link.dataset.page===route) link.setAttribute('aria-current','page');
+    const destination=hash==='mapa'?'mapa':route;
+    closeAccount();
+    for(const link of routeLinks) {
+      if(link.dataset.page===destination) link.setAttribute('aria-current',destination==='mapa'?'location':'page');
       else link.removeAttribute('aria-current');
-    });
-    if(hash==='mapa'){
+    }
+    if(destination==='mapa'){
       $('#mapa').scrollIntoView({behavior:'instant',block:'start'});
+      if(focus) $('#mapa').focus({preventScroll:true});
       prepareMap().then(()=>cityMap?.resize());
-    } else if(hash!=='content') scrollTo(0,0);
+    } else if(path==='participate-ride') {
+      ride.scrollIntoView({behavior:'instant',block:'start'});
+      if(focus) ride.focus({preventScroll:true});
+    } else if(hash!=='content') {
+      scrollTo(0,0);
+      if(focus) $('#content').focus({preventScroll:true});
+    }
+    if(reportLink) {
+      const reportId=Number(reportLink[1]);
+      tracking.setProtocol(reportId);
+      detail(reportId);
+    }
+    $('#share-search').hidden=route!=='explorar';
     if(titles[route]) {
       $('#explorer-title').textContent=titles[route][0];
       $('#explorer-description').textContent=titles[route][1];
-      if(previous!==route) filters.reset();
+      if(previous!==route || (route==='explorar' && explorerSearch!==search)) filters.reset();
+      if(route==='explorar') {
+        explorerSearch=search;
+        const params=new URLSearchParams(search);
+        filters.elements.busca.value=(params.get('busca')||'').slice(0,100);
+        for(const name of ['categoria','ordem']) {
+          const field=filters.elements[name];
+          if([...field.options].some(option=>option.value===params.get(name))) field.value=params.get(name);
+        }
+        const period=params.get('periodo');
+        if(['7','30','90'].includes(period)) filters.elements.periodo.value=period;
+        const status=params.get('status');
+        if(Object.hasOwn(statuses,status)) filters.elements.status.value=status;
+      }
       $('#show-board').hidden=route!=='gestao';
       if(route==='gestao' && getUser()?.papel!=='admin') { location.hash='explorar'; return; }
       if(portal.scope()&&!getUser()) {
         $('#cards').replaceChildren(element('div','Entre na sua conta para acessar esta área.','empty'));
-        $('#count').textContent='Área da sua conta';
+        $('#count').textContent='Faça login para continuar.';
         $('#more').hidden=true;
         view('list');
         openAuth(()=>load());
@@ -190,18 +289,20 @@ export function connectPortal(ui) {
     } else await refresh();
   }
   portal.navigate=navigate;
-  addEventListener('hashchange',navigate);
-  document.querySelectorAll('a[href="#mapa"]').forEach(link=>link.addEventListener('click',event=>{
-    event.preventDefault();
-    if(location.hash==='#mapa') navigate();
-    else location.hash='mapa';
+  addEventListener('hashchange',()=>navigate({focus:true}));
+  document.querySelectorAll('a[href^="#"]:not(.skip-link)').forEach(link=>link.addEventListener('click',event=>{
+    if(event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+    if(link.hash===location.hash) {
+      event.preventDefault();
+      navigate({focus:true});
+    }
   }));
 
   function onUser(user) {
     $('#admin-nav').hidden=user?.papel!=='admin';
     $('#profile').hidden=!user;
-    $('#journey-auth').textContent=user?'Sair':'Entrar';
-    $('#journey-notifications').hidden=!user;
+    $('#notifications').hidden=!user;
+    $('#account').hidden=!user;
     if(user) updateUnread();
     else $('#unread').hidden=true;
   }
@@ -227,7 +328,7 @@ export function connectPortal(ui) {
       item.append(element('p',message.mensagem),element('small',date(message.criado_em)),element('br'),button('Abrir ocorrência',()=>{dialog.close();detail(message.ocorrencia_id);}));
       return item;
     });
-    $('#notification-list').replaceChildren(...(nodes.length?nodes:[element('p','Você ainda não recebeu atualizações.','muted')]));
+    $('#notification-list').replaceChildren(...(nodes.length?nodes:[element('p','Você ainda não tem notificações.','muted')]));
     $('#mark-read').hidden=!messages.some(message=>!message.lida);
   };
   $('#mark-read').onclick=async()=>{
@@ -265,7 +366,7 @@ export function connectPortal(ui) {
   };
   const csv=values=>values.map(value=>'"'+String(value).replaceAll('"','""')+'"').join(';');
   $('#export').onclick=()=>{
-    if(!latestSummary) return notice('Os indicadores ainda estão carregando.');
+    if(!latestSummary) return notice('Aguarde os indicadores carregarem para baixar o CSV.');
     const data=latestSummary;
     const records=[csv(['Indicador','Chave','Total']),
       ...Object.entries(data.totais).map(([label,value])=>csv(['Resumo',label,value])),
