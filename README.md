@@ -2,6 +2,8 @@
 
 Projeto acadêmico de Computação Aplicada para registrar e acompanhar problemas urbanos no município de São Paulo. É possível marcar um problema no mapa, anexar uma foto, confirmar relatos de outros moradores e acompanhar as mudanças de status.
 
+[Integrantes e líder do projeto](#integrantes)
+
 ## Como rodar no Windows
 
 Você precisa de **Git**, **Node.js 22 ou superior** (com npm) e **MySQL Server 8.4**. Deixe o serviço do MySQL em execução antes de iniciar o site. Os passos abaixo usam o PowerShell, salvo o bloco SQL.
@@ -86,3 +88,20 @@ Saia da conta e entre de novo. Em **Gestão de ocorrências**, abra um relato e 
 - O [modelo de dados](docs/DER.md) documenta as 11 tabelas da instalação nova, incluindo sessões, e a visão `painel_ocorrencias`.
 
 Dados do limite municipal do [IBGE](https://servicodados.ibge.gov.br/api/v3/malhas/municipios/3550308?formato=application/vnd.geo%2Bjson&qualidade=maxima). Cartografia do OpenStreetMap e OpenFreeMap.
+
+## Integrantes
+
+| Nome | RA | Função |
+| --- | --- | --- |
+| **Guilherme Ferreira Bento** | 3026102010 | **Líder do projeto** |
+| André Richard Rios Escobar | 3026105428 | Integrante |
+| Gabriel de Sousa Borges | 3026101895 | Integrante |
+| Guilherme Manoel de Lima | 3026101687 | Integrante |
+| Gustavo Pereira Furlan | 3026102533 | Integrante |
+| Isaac Batista de Melo | 3026104873 | Integrante |
+| Jorge Henrique do Nascimento | 3126103267 | Integrante |
+| Kayke Lira Moreira | 3126103464 | Integrante |
+| Luca Maciel da Silva do Nascimento | 3026100339 | Integrante |
+| Murilo Akio Ribeiro Kota | 3025103571 | Integrante |
+
+Veja também a [lista em `docs/Integrantes.md`](docs/Integrantes.md) e a [documentação do sistema](docs/Cidade-Viva-Documentacao-do-Sistema.pdf).
